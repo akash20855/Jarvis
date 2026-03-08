@@ -1,15 +1,7 @@
 name: JARVIS APK Builder
-
 on:
-  # Build on every push to main
   push:
     branches: [ main ]
-
-  # Build on every pull request
-  pull_request:
-    branches: [ main ]
-
-  # Allow manual trigger from GitHub website
   workflow_dispatch:
     inputs:
       bump:
@@ -17,146 +9,65 @@ on:
         required: true
         default: 'patch'
         type: choice
-        options:
-          - patch
-          - minor
-          - major
-      release:
-        description: 'Build release APK (signed)?'
-        required: true
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
+        options: [patch, minor, major]
 
 jobs:
   build-apk:
     name: Build Jarvis APK
     runs-on: ubuntu-22.04
     timeout-minutes: 60
-
     steps:
-
-      # ── STEP 1: Get the code ──────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ── STEP 2: Set up Python ─────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
-      # ── STEP 3: Install system dependencies ───────────────────────────
       - name: Install system packages
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y \
-            git zip unzip \
-            openjdk-17-jdk \
-            build-essential \
-            libssl-dev libffi-dev \
-            python3-dev \
-            autoconf automake libtool \
-            pkg-config \
-            zlib1g-dev \
-            libncurses5-dev \
-            libsqlite3-dev \
-            libgdbm-dev \
-            libbz2-dev \
-            liblzma-dev \
-            libreadline-dev \
-            ccache
+          sudo apt-get install -y git zip unzip openjdk-17-jdk build-essential libssl-dev libffi-dev python3-dev autoconf automake libtool pkg-config zlib1g-dev
 
-      # ── STEP 4: Cache Buildozer & Android SDK (saves 20min on rebuilds)
-      - name: Cache Buildozer global directory
+      - name: Cache Buildozer
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
           key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
-          restore-keys: |
-            buildozer-${{ runner.os }}-
 
-      - name: Cache Android SDK/NDK
+      - name: Cache Android SDK
         uses: actions/cache@v4
         with:
           path: ~/.android
           key: android-sdk-${{ runner.os }}-api33
-          restore-keys: |
-            android-sdk-${{ runner.os }}-
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: ~/.gradle
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
-
-      # ── STEP 5: Install Python packages ───────────────────────────────
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
           pip install buildozer cython virtualenv
-          pip install -r requirements.txt
 
-      # ── STEP 6: Set up version ────────────────────────────────────────
-      - name: Determine version bump
+      - name: Determine version
         id: version
         run: |
           BUMP="${{ github.event.inputs.bump || 'patch' }}"
           python ci_version.py --bump $BUMP
           VERSION=$(python ci_version.py --get)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION"
 
-      # ── STEP 7: Build the APK ─────────────────────────────────────────
       - name: Build Debug APK
-        if: ${{ github.event.inputs.release != 'true' }}
-        run: |
-          buildozer android debug 2>&1 | tee build.log
-        env:
-          ANDROIDSDK:  ${{ runner.temp }}/android-sdk
-          ANDROIDNDK:  ${{ runner.temp }}/android-ndk
+        run: buildozer android debug 2>&1 | tee build.log
 
-      - name: Build Release APK
-        if: ${{ github.event.inputs.release == 'true' }}
+      - name: Find and upload APK
         run: |
-          buildozer android release 2>&1 | tee build.log
-        env:
-          ANDROIDSDK:  ${{ runner.temp }}/android-sdk
-          ANDROIDNDK:  ${{ runner.temp }}/android-ndk
-
-      # ── STEP 8: Sign release APK ──────────────────────────────────────
-      - name: Sign Release APK
-        if: ${{ github.event.inputs.release == 'true' }}
-        run: |
-          python ci_sign.py \
-            --apk bin/*.apk \
-            --keystore-b64 "${{ secrets.KEYSTORE_B64 }}" \
-            --key-alias     "${{ secrets.KEY_ALIAS }}" \
-            --key-password  "${{ secrets.KEY_PASSWORD }}"
-
-      # ── STEP 9: Rename APK cleanly ────────────────────────────────────
-      - name: Rename APK
-        run: |
-          VERSION=${{ steps.version.outputs.version }}
-          TYPE=${{ github.event.inputs.release == 'true' && 'release' || 'debug' }}
           mkdir -p dist
-          cp bin/*.apk dist/jarvis-v${VERSION}-${TYPE}.apk
-          echo "APK_NAME=jarvis-v${VERSION}-${TYPE}.apk" >> $GITHUB_ENV
-          echo "APK_PATH=dist/jarvis-v${VERSION}-${TYPE}.apk" >> $GITHUB_ENV
+          find . -name "*.apk" | head -5
+          APK=$(find . -name "*.apk" | head -1)
+          VERSION=${{ steps.version.outputs.version }}
+          cp "$APK" dist/jarvis-v${VERSION}-debug.apk
+          echo "APK_PATH=dist/jarvis-v${VERSION}-debug.apk" >> $GITHUB_ENV
+          echo "APK_NAME=jarvis-v${VERSION}-debug.apk" >> $GITHUB_ENV
 
-      # ── STEP 10: Generate build info ──────────────────────────────────
-      - name: Generate build info
-        run: |
-          python ci_manifest.py \
-            --version ${{ steps.version.outputs.version }} \
-            --apk     ${{ env.APK_PATH }}
-
-      # ── STEP 11: Upload APK as artifact (download from GitHub) ────────
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -164,64 +75,22 @@ jobs:
           path: dist/*.apk
           retention-days: 30
 
-      # ── STEP 12: Create GitHub Release (on main branch push) ──────────
       - name: Create GitHub Release
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.version.outputs.version }}
-          name:     JARVIS v${{ steps.version.outputs.version }}
-          body: |
-            ## JARVIS v${{ steps.version.outputs.version }}
-
-            Auto-built by GitHub Actions.
-            Built at: ${{ github.event.head_commit.timestamp }}
-            Commit: ${{ github.sha }}
-
-            ### Install
-            Download `jarvis-v${{ steps.version.outputs.version }}-debug.apk`
-            and tap to install on your Android phone.
-
-            ### What changed
-            ${{ github.event.head_commit.message }}
+          name: JARVIS v${{ steps.version.outputs.version }}
+          body: Auto-built APK v${{ steps.version.outputs.version }}
           files: dist/*.apk
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── STEP 13: Upload to update server (optional) ───────────────────
-      - name: Push to update server
-        if: |
-          github.ref == 'refs/heads/main' &&
-          env.UPDATE_SERVER != ''
-        run: |
-          python ci_deploy.py \
-            --apk      ${{ env.APK_PATH }} \
-            --version  ${{ steps.version.outputs.version }} \
-            --server   ${{ secrets.UPDATE_SERVER }} \
-            --key      ${{ secrets.BUILD_KEY }}
-        env:
-          UPDATE_SERVER: ${{ secrets.UPDATE_SERVER }}
-
-      # ── STEP 14: Commit version bump back ─────────────────────────────
       - name: Commit version bump
-        if: github.ref == 'refs/heads/main'
         run: |
-          git config user.name  "JARVIS Bot"
+          git config user.name "JARVIS Bot"
           git config user.email "jarvis@bot.local"
           git add version.json
-          git diff --staged --quiet || \
-            git commit -m "chore: bump version to v${{ steps.version.outputs.version }} [skip ci]"
+          git diff --staged --quiet || git commit -m "chore: bump version [skip ci]"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ── STEP 15: Show summary ─────────────────────────────────────────
-      - name: Build summary
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  JARVIS BUILD COMPLETE"
-          echo "  Version: ${{ steps.version.outputs.version }}"
-          echo "  APK: ${{ env.APK_NAME }}"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
