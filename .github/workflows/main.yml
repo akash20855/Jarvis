@@ -35,6 +35,8 @@ jobs:
           echo "version=$(python ci_version.py --get)" >> $GITHUB_OUTPUT
 
       - name: Build Debug APK
+        env:
+          BUILDOZER_WARN_ON_ROOT: 0
         run: buildozer android debug 2>&1 | tee build.log
 
       - name: Find and copy APK
