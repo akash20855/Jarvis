@@ -37,17 +37,11 @@ jobs:
 
       - name: Accept Android SDK licenses
         run: |
-          mkdir -p $ANDROID_HOME/licenses
-          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_HOME/licenses/android-sdk-license
-          echo "84831b9409646a918e30573bab4c9c91346d8abd" >> $ANDROID_HOME/licenses/android-sdk-license
-          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $ANDROID_HOME/licenses/android-sdk-license
-          echo "d975f751698a77b662f1254ddbeed3901e976f5a" > $ANDROID_HOME/licenses/android-sdk-preview-license
-          echo "84831b9409646a918e30573bab4c9c91346d8abd" >> $ANDROID_HOME/licenses/android-sdk-preview-license
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
             "build-tools;33.0.2" \
-            "build-tools;37.0.0-rc2" \
-            "platforms;android-33"
+            "platforms;android-33" \
+            "ndk;25.2.9519653"
 
       - name: Cache Buildozer
         uses: actions/cache@v4
@@ -71,6 +65,9 @@ jobs:
           echo "version=$(python ci_version.py --get)" >> $GITHUB_OUTPUT
 
       - name: Build Debug APK
+        env:
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/25.2.9519653
         run: buildozer android debug 2>&1 | tee build.log
 
       - name: Find and copy APK
