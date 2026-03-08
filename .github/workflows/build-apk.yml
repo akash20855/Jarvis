@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: 'Version bump type'
+        description: 'Version bump'
         required: true
         default: 'patch'
         type: choice
@@ -43,36 +43,27 @@ jobs:
           key: android-sdk-${{ runner.os }}-api33
 
       - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install buildozer cython virtualenv
+        run: pip install --upgrade pip buildozer cython virtualenv
 
       - name: Determine version
         id: version
         run: |
-          BUMP="${{ github.event.inputs.bump || 'patch' }}"
-          python ci_version.py --bump $BUMP
-          VERSION=$(python ci_version.py --get)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          python ci_version.py --bump ${{ github.event.inputs.bump || 'patch' }}
+          echo "version=$(python ci_version.py --get)" >> $GITHUB_OUTPUT
 
       - name: Build Debug APK
         run: buildozer android debug 2>&1 | tee build.log
 
-      - name: Find and upload APK
-        run: |
-          mkdir -p dist
-          find . -name "*.apk" | head -5
-          APK=$(find . -name "*.apk" | head -1)
-          VERSION=${{ steps.version.outputs.version }}
-          cp "$APK" dist/jarvis-v${VERSION}-debug.apk
-          echo "APK_PATH=dist/jarvis-v${VERSION}-debug.apk" >> $GITHUB_ENV
-          echo "APK_NAME=jarvis-v${VERSION}-debug.apk" >> $GITHUB_ENV
+      - name: Find APK location
+        run: find . -name "*.apk" -not -path "*/cache/*" 2>/dev/null
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: jarvis-apk-${{ steps.version.outputs.version }}
-          path: dist/*.apk
+          path: |
+            **/*.apk
+            !**/.buildozer/android/platform/*/cache/**
           retention-days: 30
 
       - name: Create GitHub Release
@@ -80,8 +71,8 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: JARVIS v${{ steps.version.outputs.version }}
-          body: Auto-built APK v${{ steps.version.outputs.version }}
-          files: dist/*.apk
+          body: Auto-built APK
+          files: "**/*.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
