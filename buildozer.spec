@@ -9,7 +9,7 @@ requirements = python3,kivy==2.2.1,requests,httpx,pyttsx3,SpeechRecognition,sche
 android.api = 33
 android.minapi = 21
 android.ndk = 25b
-android.arch = arm64-v8a
+android.archs = arm64-v8a
 android.permissions = INTERNET,RECORD_AUDIO,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,RECEIVE_BOOT_COMPLETED,FOREGROUND_SERVICE,REQUEST_INSTALL_PACKAGES,VIBRATE
 [buildozer]
 log_level = 1
