@@ -1,0 +1,7 @@
+.env
+*.db
+.buildozer/
+__pycache__/
+*.pyc
+dist/
+backup/
