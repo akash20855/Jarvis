@@ -1,0 +1,136 @@
+name: JARVIS APK Builder
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump'
+        required: true
+        default: 'patch'
+        type: choice
+        options: [patch, minor, major]
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build Jarvis APK
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git zip unzip openjdk-17-jdk build-essential \
+            libssl-dev libffi-dev python3-dev autoconf automake libtool \
+            pkg-config zlib1g-dev
+
+      - name: Accept Android SDK licenses
+        run: |
+          mkdir -p $ANDROID_HOME/licenses
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_HOME/licenses/android-sdk-license
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" >> $ANDROID_HOME/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $ANDROID_HOME/licenses/android-sdk-license
+          echo "d975f751698a77b662f1254ddbeed3901e976f5a" > $ANDROID_HOME/licenses/android-sdk-preview-license
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" >> $ANDROID_HOME/licenses/android-sdk-preview-license
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "build-tools;33.0.2" \
+            "build-tools;37.0.0-rc2" \
+            "platforms;android-33"
+
+      - name: Cache Buildozer
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+
+      - name: Cache Android SDK
+        uses: actions/cache@v4
+        with:
+          path: ~/.android
+          key: android-sdk-${{ runner.os }}-api33
+
+      - name: Install Python dependencies
+        run: pip install --upgrade pip buildozer cython virtualenv
+
+      - name: Determine version
+        id: version
+        run: |
+          python ci_version.py --bump ${{ github.event.inputs.bump || 'patch' }}
+          echo "version=$(python ci_version.py --get)" >> $GITHUB_OUTPUT
+
+      - name: Build Debug APK
+        run: buildozer android debug 2>&1 | tee build.log
+
+      - name: Find and copy APK
+        id: findapk
+        run: |
+          echo "=== Searching ALL locations for APK ==="
+          find . -name "*.apk" 2>/dev/null || true
+          find ~/.buildozer -name "*.apk" 2>/dev/null || true
+
+          APK=$(find . -name "*.apk" 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            APK=$(find ~/.buildozer -name "*.apk" 2>/dev/null | head -1)
+          fi
+
+          echo "Found APK: $APK"
+          mkdir -p dist
+
+          if [ -n "$APK" ]; then
+            DEST="dist/jarvis-v${{ steps.version.outputs.version }}-debug.apk"
+            cp "$APK" "$DEST"
+            echo "apk_path=$DEST" >> $GITHUB_OUTPUT
+            echo "apk_found=true" >> $GITHUB_OUTPUT
+            echo "SUCCESS: APK copied to $DEST"
+          else
+            echo "apk_found=false" >> $GITHUB_OUTPUT
+            echo "ERROR: No APK found anywhere!"
+            echo "--- build.log tail ---"
+            tail -50 build.log || true
+            exit 1
+          fi
+
+      - name: Upload APK artifact
+        if: steps.findapk.outputs.apk_found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-apk-${{ steps.version.outputs.version }}
+          path: dist/*.apk
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: steps.findapk.outputs.apk_found == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: JARVIS v${{ steps.version.outputs.version }}
+          body: |
+            ## JARVIS APK v${{ steps.version.outputs.version }}
+            Auto-built debug APK — ready to install.
+            > Enable "Install from unknown sources" on your device before installing.
+          files: dist/*.apk
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit version bump
+        run: |
+          git config user.name "JARVIS Bot"
+          git config user.email "jarvis@bot.local"
+          git add version.json
+          git diff --staged --quiet || git commit -m "chore: bump version [skip ci]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
