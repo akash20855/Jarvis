@@ -31,7 +31,9 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y git zip unzip openjdk-17-jdk build-essential libssl-dev libffi-dev python3-dev autoconf automake libtool pkg-config zlib1g-dev
+          sudo apt-get install -y git zip unzip openjdk-17-jdk build-essential \
+            libssl-dev libffi-dev python3-dev autoconf automake libtool \
+            pkg-config zlib1g-dev
 
       - name: Cache Buildozer
         uses: actions/cache@v4
@@ -60,17 +62,30 @@ jobs:
       - name: Find and copy APK
         id: findapk
         run: |
-          echo "=== Searching for APK ==="
-          find . -name "*.apk" 2>/dev/null
+          echo "=== Searching ALL locations for APK ==="
+          find . -name "*.apk" 2>/dev/null || true
+          find ~/.buildozer -name "*.apk" 2>/dev/null || true
+
           APK=$(find . -name "*.apk" 2>/dev/null | head -1)
-          echo "Found: $APK"
+          if [ -z "$APK" ]; then
+            APK=$(find ~/.buildozer -name "*.apk" 2>/dev/null | head -1)
+          fi
+
+          echo "Found APK: $APK"
           mkdir -p dist
+
           if [ -n "$APK" ]; then
-            cp "$APK" dist/jarvis-v${{ steps.version.outputs.version }}-debug.apk
+            DEST="dist/jarvis-v${{ steps.version.outputs.version }}-debug.apk"
+            cp "$APK" "$DEST"
+            echo "apk_path=$DEST" >> $GITHUB_OUTPUT
             echo "apk_found=true" >> $GITHUB_OUTPUT
+            echo "SUCCESS: APK copied to $DEST"
           else
             echo "apk_found=false" >> $GITHUB_OUTPUT
-            echo "WARNING: No APK found"
+            echo "ERROR: No APK found anywhere!"
+            echo "--- build.log tail ---"
+            tail -50 build.log || true
+            exit 1
           fi
 
       - name: Upload APK artifact
@@ -87,8 +102,12 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: JARVIS v${{ steps.version.outputs.version }}
-          body: Auto-built APK ready to install
+          body: |
+            ## JARVIS APK v${{ steps.version.outputs.version }}
+            Auto-built debug APK — ready to install.
+            > Enable "Install from unknown sources" on your device before installing.
           files: dist/*.apk
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
