@@ -18,55 +18,15 @@ jobs:
   build-apk:
     name: Build Jarvis APK
     runs-on: ubuntu-22.04
+    container:
+      image: kivy/buildozer:latest
     timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install system packages
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y git zip unzip openjdk-17-jdk build-essential \
-            libssl-dev libffi-dev python3-dev autoconf automake libtool \
-            pkg-config zlib1g-dev
-
-      - name: Setup Android SDK
-        run: |
-          # Write ALL license hashes including rc2 preview
-          mkdir -p $ANDROID_HOME/licenses
-          printf '24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e\n84831b9409646a918e30573bab4c9c91346d8abd\n' > $ANDROID_HOME/licenses/android-sdk-license
-          printf '84831b9409646a918e30573bab4c9c91346d8abd\nd975f751698a77b662f1254ddbeed3901e976f5a\n' > $ANDROID_HOME/licenses/android-sdk-preview-license
-          printf '33b6a2b64607f11b759f320ef9dff4ae5c47d97a\n' > $ANDROID_HOME/licenses/google-gdk-license
-          # Now install everything
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-            "build-tools;33.0.2" \
-            "build-tools;37.0.0-rc2" \
-            "platforms;android-33" \
-            "ndk;25.2.9519653"
-          # Verify aidl
-          find $ANDROID_HOME/build-tools -name "aidl"
-          # Symlink aidl to PATH just in case
-          sudo ln -sf $ANDROID_HOME/build-tools/33.0.2/aidl /usr/local/bin/aidl || true
-
-      - name: Cache Buildozer
-        uses: actions/cache@v4
-        with:
-          path: ~/.buildozer
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
-
-      - name: Cache Android SDK
-        uses: actions/cache@v4
-        with:
-          path: ~/.android
-          key: android-sdk-${{ runner.os }}-api33
-
       - name: Install Python dependencies
-        run: pip install --upgrade pip buildozer cython virtualenv
+        run: pip install --upgrade pip cython virtualenv
 
       - name: Determine version
         id: version
@@ -75,32 +35,23 @@ jobs:
           echo "version=$(python ci_version.py --get)" >> $GITHUB_OUTPUT
 
       - name: Build Debug APK
-        env:
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
-          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/25.2.9519653
         run: buildozer android debug 2>&1 | tee build.log
 
       - name: Find and copy APK
         id: findapk
         run: |
-          echo "=== Searching ALL locations for APK ==="
           find . -name "*.apk" 2>/dev/null || true
           find ~/.buildozer -name "*.apk" 2>/dev/null || true
           APK=$(find . -name "*.apk" 2>/dev/null | head -1)
           if [ -z "$APK" ]; then
             APK=$(find ~/.buildozer -name "*.apk" 2>/dev/null | head -1)
           fi
-          echo "Found APK: $APK"
           mkdir -p dist
           if [ -n "$APK" ]; then
-            DEST="dist/jarvis-v${{ steps.version.outputs.version }}-debug.apk"
-            cp "$APK" "$DEST"
-            echo "apk_path=$DEST" >> $GITHUB_OUTPUT
+            cp "$APK" dist/jarvis-v${{ steps.version.outputs.version }}-debug.apk
             echo "apk_found=true" >> $GITHUB_OUTPUT
-            echo "SUCCESS: APK copied to $DEST"
           else
             echo "apk_found=false" >> $GITHUB_OUTPUT
-            echo "ERROR: No APK found anywhere!"
             tail -50 build.log || true
             exit 1
           fi
@@ -124,7 +75,6 @@ jobs:
             Auto-built debug APK — ready to install.
             > Enable "Install from unknown sources" on your device before installing.
           files: dist/*.apk
-          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
