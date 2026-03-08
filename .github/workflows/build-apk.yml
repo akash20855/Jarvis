@@ -11,6 +11,9 @@ on:
         type: choice
         options: [patch, minor, major]
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     name: Build Jarvis APK
@@ -54,25 +57,38 @@ jobs:
       - name: Build Debug APK
         run: buildozer android debug 2>&1 | tee build.log
 
-      - name: Find APK location
-        run: find . -name "*.apk" -not -path "*/cache/*" 2>/dev/null
+      - name: Find and copy APK
+        id: findapk
+        run: |
+          echo "=== Searching for APK ==="
+          find . -name "*.apk" 2>/dev/null
+          APK=$(find . -name "*.apk" 2>/dev/null | head -1)
+          echo "Found: $APK"
+          mkdir -p dist
+          if [ -n "$APK" ]; then
+            cp "$APK" dist/jarvis-v${{ steps.version.outputs.version }}-debug.apk
+            echo "apk_found=true" >> $GITHUB_OUTPUT
+          else
+            echo "apk_found=false" >> $GITHUB_OUTPUT
+            echo "WARNING: No APK found"
+          fi
 
       - name: Upload APK artifact
+        if: steps.findapk.outputs.apk_found == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: jarvis-apk-${{ steps.version.outputs.version }}
-          path: |
-            **/*.apk
-            !**/.buildozer/android/platform/*/cache/**
+          path: dist/*.apk
           retention-days: 30
 
       - name: Create GitHub Release
+        if: steps.findapk.outputs.apk_found == 'true'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: JARVIS v${{ steps.version.outputs.version }}
-          body: Auto-built APK
-          files: "**/*.apk"
+          body: Auto-built APK ready to install
+          files: dist/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
